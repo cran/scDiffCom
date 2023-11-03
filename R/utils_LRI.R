@@ -1,5 +1,5 @@
 build_LRI <- function(
-  species = c("mouse", "human")
+  species = c("mouse", "human", "rat")
 ) {
   species <- match.arg(species)
   LRI_not_curated <- combine_LR_db(
@@ -24,7 +24,7 @@ build_LRI <- function(
     list(
       #LRI_not_curated = LRI_not_curated$LR_full,
       LRI_curated = LRI_curated$LR_full,
-      LRI_curated_GO = LRI_GO,
+      LRI_curated_GO = LRI_GO[, c("LRI", "GO_ID")],
       LRI_curated_KEGG = LRI_KEGG,
       LRI_retrieved_dates = LRI_curated$LR_retrieved_dates,
       LRI_retrieved_from = LRI_curated$LR_retrieved_from,
@@ -41,21 +41,24 @@ combine_LR_db <- function(
   DATABASE <- SOURCE <- ANNOTATION <- FAMILY <- SUBFAMILY <- keep_subLR <-
     SOURCE_CLEAN <- SOURCE_no_digit <- is_complex_temp <- LIGAND_2 <-
     RECEPTOR_2 <- LR_vectorized_temp <- N_IS_SUBPART <- i.N_IS_SUBPART <-
-    LRI <- LIGAND_1 <- RECEPTOR_1 <- RECEPTOR_3 <- NULL
+    LRI <- LIGAND_1 <- RECEPTOR_1 <- RECEPTOR_3 <- LIGAND_1_CONF <-
+    LIGAND_2_CONF <- RECEPTOR_1_CONF <- RECEPTOR_2_CONF <- RECEPTOR_3_CONF <- NULL
   # fully curated
   LR_connectomeDB2020 <- prepare_LR_connectomeDB2020(
     species = species,
     one2one = one2one
   )
   LR_CellTalkDB <- prepare_LR_CellTalkDB(
-    species = species
+    species = species,
+    one2one = one2one
   )
   LR_ICELLNET <- prepare_LR_ICELLNET(
     species = species,
     one2one = one2one
   )
   LR_CellChat <- prepare_LR_CellChat(
-    species = species
+    species = species,
+    one2one = one2one
   )
   LR_CellPhoneDB <- prepare_LR_CellPhoneDB(
     species = species,
@@ -236,7 +239,7 @@ combine_LR_db <- function(
     , c("SUBFAMILY") := do.call(paste, c(.SD, sep = ";")),
     .SDcols = col_subfam]
   LR_full[, c("SUBFAMILY") := gsub("NA|NA;|;NA", "", SUBFAMILY)]
-  if(species == "mouse") {
+  if(species %in% c("mouse", "rat")) {
     for (id_loop in c(paste0("LIGAND_", 1:2), paste0("RECEPTOR_", 1:3))) {
       cols_conf <- paste0(id_loop, "_CONF_", db_names)
       LR_full[
@@ -343,7 +346,42 @@ combine_LR_db <- function(
       )
     )
   ]
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
+    if (curated) {
+      # remove LRI with 0 orthology confidence
+      # if not provided by another database
+      genes_conf <- unique(
+        c(
+          LR_full[LIGAND_1_CONF == 1]$LIGAND_1,
+          LR_full[LIGAND_2_CONF == 1]$LIGAND_2,
+          LR_full[RECEPTOR_1_CONF == 1]$RECEPTOR_1,
+          LR_full[RECEPTOR_2_CONF == 1]$RECEPTOR_2,
+          LR_full[RECEPTOR_3_CONF == 1]$RECEPTOR_3
+        )
+      )
+      cols_conf <- c(
+        "LIGAND_1", "LIGAND_2",
+        "RECEPTOR_1", "RECEPTOR_2", "RECEPTOR_3"
+      )
+      LR_full[
+        ,
+        paste0(cols_conf, "_CONF") := lapply(
+          cols_conf,
+          function(i) {
+            ifelse(
+              get(i) %in% genes_conf, 1, get(paste0(i, "_CONF"))
+            )
+          }
+        )
+      ]
+      LR_full <- LR_full[
+        LIGAND_1_CONF == 1 &
+          (LIGAND_2_CONF == 1 | is.na(LIGAND_2_CONF)) &
+          RECEPTOR_1_CONF == 1 &
+          (RECEPTOR_2_CONF == 1 | is.na (RECEPTOR_2_CONF)) &
+          (RECEPTOR_3_CONF == 1 | is.na (RECEPTOR_3_CONF))
+      ]
+    }
     cols_to_keep <- c(
       cols_to_keep,
       "LRI",
@@ -416,10 +454,11 @@ prepare_LR_connectomeDB2020 <- function(
     !(L1 %in% GENES_to_remove_human$gene) &
       !(R1 %in% GENES_to_remove_human$gene)
   ]
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     ortho <- get_orthologs(
       genes = unique(c(LR$L1, LR$R1)),
       input_species = "human",
+      output_species = species,
       one2one = one2one
     )
     ortho <- stats::na.omit(ortho)
@@ -429,7 +468,9 @@ prepare_LR_connectomeDB2020 <- function(
       nL = 1,
       charL = "L",
       nR = 1,
-      charR = "R"
+      charR = "R",
+      output_species = species,
+      input_species = "human"
     )
     cols_to_keep <- c(
       "LR_SORTED", "SOURCE",
@@ -480,12 +521,13 @@ prepare_LR_connectomeDB2020 <- function(
 }
 
 prepare_LR_CellTalkDB <- function(
-  species
+  species,
+  one2one
 ) {
   LR_SORTED <- SOURCE <- LIGAND_1 <- RECEPTOR_1 <- NULL
   retrieved_date <- as.Date("2021-03-22")
   retrieved_from <- "http://tcm.zju.edu.cn/celltalkdb/"
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     LR <- CellTalkDB_mouse
   }
   if (species == "human") {
@@ -499,17 +541,56 @@ prepare_LR_CellTalkDB <- function(
     new = c("LIGAND_1", "RECEPTOR_1", "SOURCE")
   )
   #remove genes that should be excluded according to our manual curation
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     LR <- LR[
       !(LIGAND_1 %in% GENES_to_remove_mouse$gene) &
         !(RECEPTOR_1 %in% GENES_to_remove_mouse$gene)
     ]
+    if (species == "mouse") {
+      #there are genes that are not MGI approved symbol, we change them
+      LR[LR == "Il1f8"] <- "Il36b"
+      LR[LR == "Il1f6"] <- "Il36a"
+      LR[LR == "Il1f5"] <- "Il36rn"
+    }
+    cols_to_keep <- c(
+      "LR_SORTED", "SOURCE",
+      "LIGAND_1", "RECEPTOR_1"
+    )
   }
   if (species == "human") {
     LR <- LR[
       !(LIGAND_1 %in% GENES_to_remove_human$gene) &
         !(RECEPTOR_1 %in% GENES_to_remove_human$gene)
     ]
+    cols_to_keep <- c(
+      "LR_SORTED", "SOURCE",
+      "LIGAND_1", "RECEPTOR_1"
+    )
+  }
+  if (species == "rat") {
+    ortho <- get_orthologs(
+      genes = unique(c(LR$LIGAND_1, LR$RECEPTOR_1)),
+      input_species = "mouse",
+      output_species = species,
+      one2one = one2one
+    )
+    ortho <- stats::na.omit(ortho)
+    LR <- merge_LR_orthologs(
+      LR_dt = LR,
+      ortho_dt = ortho,
+      nL = 1,
+      charL = "LIGAND_",
+      nR = 1,
+      charR = "RECEPTOR_",
+      output_species = species,
+      input_species = "mouse"
+    )
+    cols_to_keep <- c(
+      "LR_SORTED", "SOURCE",
+      "LIGAND_1", "RECEPTOR_1",
+      "LIGAND_1_CONF", "RECEPTOR_1_CONF",
+      "LIGAND_1_TYPE", "RECEPTOR_1_TYPE"
+    )
   }
   LR[, LR_SORTED := list(sapply(1:nrow(.SD), function(i) {
     temp <- c(
@@ -525,10 +606,6 @@ prepare_LR_CellTalkDB <- function(
     temp <- paste0(temp, collapse = "_")
   }))]
   LR <- LR[!duplicated(LR_SORTED)]
-  cols_to_keep <- c(
-    "LR_SORTED", "SOURCE",
-    "LIGAND_1", "RECEPTOR_1"
-  )
   #some manual fixes to correct bad formatting in their original DB
   LR[, SOURCE := sub(",$", "", SOURCE)]
   LR[, SOURCE := gsub(";NO", "", SOURCE, fixed = TRUE)]
@@ -593,10 +670,11 @@ prepare_LR_ICELLNET <- function(
       !(R2 %in% GENES_to_remove_human$gene) &
       !(R3 %in% GENES_to_remove_human$gene)
   ]
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     ortho <- get_orthologs(
       genes = unique(c(LR$L1, LR$L2, LR$R1, LR$R2, LR$R3)),
       input_species = "human",
+      output_species = species,
       one2one = one2one
     )
     ortho <- stats::na.omit(ortho)
@@ -606,7 +684,9 @@ prepare_LR_ICELLNET <- function(
       nL = 2,
       charL = "L",
       nR = 3,
-      charR = "R"
+      charR = "R",
+      output_species = species,
+      input_species = "human"
     )
     cols_to_keep <- c(
       "LR_SORTED",
@@ -664,7 +744,8 @@ prepare_LR_ICELLNET <- function(
 }
 
 prepare_LR_CellChat <- function(
-  species
+  species,
+  one2one
 ) {
   LIGAND_1 <- RECEPTOR_1 <- RECEPTOR_2 <- LR_SORTED <- SOURCE <-
     interaction_name_2 <- temp <- new <- NULL
@@ -679,7 +760,7 @@ prepare_LR_CellChat <- function(
   # }
   retrieved_date <- as.Date("2021-03-22")
   retrieved_from <- "CellChat::CellChatDB"
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     #LR <- CellChat::CellChatDB.mouse$interaction
     LR <- CellChat_mouse
   }
@@ -695,9 +776,8 @@ prepare_LR_CellChat <- function(
   )
   LR[, LIGAND_1 := sub(" - .*", "", interaction_name_2)]
   LR[, temp := sub(".* - ", "", interaction_name_2)]
-  LR[,
-     RECEPTOR_1 := ifelse(grepl("+", temp, fixed = TRUE),
-                          gsub(".*\\((.+)\\+.*", "\\1", temp), temp)]
+  LR[, RECEPTOR_1 := ifelse(grepl("+", temp, fixed = TRUE),
+                            gsub(".*\\((.+)\\+.*", "\\1", temp), temp)]
   LR[, RECEPTOR_2 := ifelse(grepl("+", temp, fixed = TRUE),
                             gsub(".*\\+(.+)\\).*", "\\1", temp), NA)]
   LR[, temp := NULL]
@@ -705,7 +785,7 @@ prepare_LR_CellChat <- function(
   LR[, RECEPTOR_1 := gsub(" ", "", RECEPTOR_1)]
   LR[, RECEPTOR_2 := gsub(" ", "", RECEPTOR_2)]
   # some CellChat gene names  are not mgi/HGNC_symbols
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     convert_table <- CellChat_conversion_mouse
   }
   if (species == "human") {
@@ -729,7 +809,7 @@ prepare_LR_CellChat <- function(
     on = "RECEPTOR_2==old"
   ]
   #remove genes that should be excluded according to our manual curation
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     LR <- LR[
       !(LIGAND_1 %in% GENES_to_remove_mouse$gene) &
         !(RECEPTOR_1 %in% GENES_to_remove_mouse$gene) &
@@ -742,6 +822,31 @@ prepare_LR_CellChat <- function(
         !(RECEPTOR_1 %in% GENES_to_remove_human$gene) &
         !(RECEPTOR_2 %in% GENES_to_remove_human$gene)
     ]
+  }
+  if (species == "rat") {
+    ortho <- get_orthologs(
+      genes = unique(c(LR$LIGAND_1, LR$RECEPTOR_1, LR$RECEPTOR_2)),
+      input_species = "mouse",
+      output_species = species,
+      one2one = one2one
+    )
+    ortho <- stats::na.omit(ortho)
+    LR <- merge_LR_orthologs(
+      LR_dt = LR,
+      ortho_dt = ortho,
+      nL = 1,
+      charL = "LIGAND_",
+      nR = 2,
+      charR = "RECEPTOR_",
+      output_species = species,
+      input_species = "mouse"
+    )
+    cols_to_keep <- c(
+      "LR_SORTED", "ANNOTATION", "SOURCE",
+      "LIGAND_1", "RECEPTOR_1", "RECEPTOR_2",
+      "LIGAND_1_CONF", "RECEPTOR_1_CONF", "RECEPTOR_2_CONF",
+      "LIGAND_1_TYPE", "RECEPTOR_1_TYPE", "RECEPTOR_2_TYPE"
+    )
   }
   LR[, LR_SORTED := list(sapply(1:nrow(.SD), function(i) {
     temp <- c(LIGAND_1[[i]], RECEPTOR_1[[i]], RECEPTOR_2[[i]])
@@ -793,12 +898,13 @@ prepare_LR_CellPhoneDB <- function(
       !(R_2 %in% GENES_to_remove_human$gene) &
       !(R_3 %in% GENES_to_remove_human$gene)
   ]
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     genes_temp <- unique(unlist(LR))
     genes_temp <- genes_temp[!is.na(genes_temp)]
     ortho <- get_orthologs(
       genes = genes_temp,
       input_species = "human",
+      output_species = species,
       one2one = one2one
     )
     ortho <- stats::na.omit(ortho)
@@ -834,7 +940,9 @@ prepare_LR_CellPhoneDB <- function(
       nL = nL,
       charL = "L_",
       nR = nR,
-      charR = "R_"
+      charR = "R_",
+      input_species = "human",
+      output_species = species
     )
   }
   if (species == "human") {
@@ -1128,10 +1236,11 @@ prepare_LR_SingleCellSignalR <- function(
     !(L1 %in% GENES_to_remove_human$gene) &
       !(R1 %in% GENES_to_remove_human$gene)
   ]
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     ortho <- get_orthologs(
       genes = unique(c(LR$L1, LR$R1)),
       input_species = "human",
+      output_species = species,
       one2one = one2one
     )
     ortho <- stats::na.omit(ortho)
@@ -1141,7 +1250,9 @@ prepare_LR_SingleCellSignalR <- function(
       nL = 1,
       charL = "L",
       nR = 1,
-      charR = "R"
+      charR = "R",
+      input_species = "human",
+      output_species = species
     )
     cols_to_keep <- c(
       "LR_SORTED", "SOURCE",
@@ -1240,10 +1351,11 @@ prepare_LR_NicheNet <- function(
     !(L1 %in% GENES_to_remove_human$gene) &
       !(R1 %in% GENES_to_remove_human$gene)
   ]
-  if (species == "mouse") {
+  if (species %in% c("mouse", "rat")) {
     ortho <- get_orthologs(
       genes = unique(c(LR$L1, LR$R1)),
       input_species = "human",
+      output_species = species,
       one2one = one2one
     )
     ortho <- stats::na.omit(ortho)
@@ -1253,7 +1365,9 @@ prepare_LR_NicheNet <- function(
       nL = 1,
       charL = "L",
       nR = 1,
-      charR = "R"
+      charR = "R",
+      input_species = "human",
+      output_species = species
     )
     cols_to_keep <- c(
       "LR_SORTED", "SOURCE",
@@ -1357,7 +1471,7 @@ prepare_LR_NicheNet <- function(
 #   LR_SORTED <- LIGAND_1 <- RECEPTOR_1 <- NULL
 #   retrieved_date <- as.Date("2021-03-22")
 #   retrieved_from <- "LRBaseDbi"
-#   if (species == "mouse") {
+#   if (species %in% c("mouse", "rat")) {
 #     key <- AnnotationDbi::keys(
 #       LRBase.Mmu.eg.db::LRBase.Mmu.eg.db,
 #       keytype = "GENEID_L"
@@ -1500,11 +1614,15 @@ get_KEGG_PWS_interactions <- function(
   }
   if (species == "mouse") {
     organism <- "mmu"
-    string_to_remove <- " - Mus musculus (mouse)"
+    string_to_remove <- " - Mus musculus (house mouse)"
   }
   if (species == "human") {
     organism <- "hsa"
     string_to_remove <-  " - Homo sapiens (human)"
+  }
+  if (species == "rat") {
+    organism <- "rno"
+    string_to_remove <-  " - Rattus norvegicus (rat)"
   }
   KEGG_PW <- KEGGREST::keggList(
     database = "pathway",
@@ -1576,10 +1694,12 @@ get_KEGG_PWS_interactions <- function(
 get_GO_interactions <- function(
   species,
   LR_db,
-  only_genes_annotations = FALSE
+  only_genes_annotations = FALSE,
+  LR_merging_mode = "ancestors_intersection",
+  return_genes_go_ancestors = FALSE
 ) {
   GO_NAME <- i.GO_name <- ASPECT <- GO_ID <-
-    LEVEL <- i.LEVEL <- NULL
+    LEVEL <- i.LEVEL <- mgi_symbol <- NULL
   if (!requireNamespace("biomaRt", quietly = TRUE)) {
     stop(
       paste0(
@@ -1607,6 +1727,14 @@ get_GO_interactions <- function(
       call. = FALSE
     )
   }
+  LR_MERGING_MODES = c(
+    "ancestors_intersection", "ancestors_union",
+    "ancestors_ligands", "ancestors_receptors",
+    "intersection", "union", "ligands", "receptors"
+  )
+  if (!(LR_merging_mode %in% LR_MERGING_MODES)) {
+    stop(paste0("Invalid LR_merging_mode: ", LR_merging_mode))
+  }
   ALL_LR_genes <- unique(
     unlist(
       LR_db[
@@ -1624,6 +1752,10 @@ get_GO_interactions <- function(
   if (species == "human") {
     dataset <- "hsapiens_gene_ensembl"
     id_gene <- "hgnc_symbol"
+  }
+  if (species == "rat") {
+    dataset <- "rnorvegicus_gene_ensembl"
+    id_gene <- "rgd_symbol"
   }
   mart <- biomaRt::useMart(
     "ensembl",
@@ -1659,21 +1791,53 @@ get_GO_interactions <- function(
     USE.NAMES = TRUE,
     simplify = FALSE
   )
+  if (return_genes_go_ancestors) {
+    return(ALL_LR_genes_go)
+  }
+  GENE_TO_GOs_MAP = ALL_LR_genes_go
+  if (LR_merging_mode == "ancestors_intersection") {
+    lr_merge_func = intersect
+  } else if (LR_merging_mode == "ancestors_union") {
+    lr_merge_func = union
+  } else if (LR_merging_mode == "ancestors_ligands") {
+    lr_merge_func = function(...) {list(...)[[1]]}
+  } else if (LR_merging_mode == "ancestors_receptors") {
+    lr_merge_func = function(...) {list(...)[[2]]}
+  } else {
+    # Don't use ancestors
+    ALL_LR_genes_info_unique = unique(ALL_LR_genes_info$mgi_symbol)
+    ALL_LR_genes_info_as_list = sapply(
+      ALL_LR_genes_info_unique, 
+      function(gene) {
+        ALL_LR_genes_info[mgi_symbol == gene]$go_id
+      }
+    )
+    GENE_TO_GOs_MAP = ALL_LR_genes_info_as_list
+    if (LR_merging_mode == "intersection") {
+      lr_merge_func = intersect
+    } else if (LR_merging_mode == "union") {
+      lr_merge_func = union
+    } else if (LR_merging_mode == "ligands") {
+      lr_merge_func = function(...) {list(...)[[1]]}
+    } else if (LR_merging_mode == "receptors") {
+      lr_merge_func = function(...) {list(...)[[2]]}
+    }
+  }
   LR_interactions_go_intersection <- rbindlist(
     apply(
       LR_db,
       MARGIN = 1,
       function(row) {
         LIGAND_GO <- unique(c(
-          ALL_LR_genes_go[[row[["LIGAND_1"]]]],
-          ALL_LR_genes_go[[row[["LIGAND_2"]]]]
+          GENE_TO_GOs_MAP[[row[["LIGAND_1"]]]],
+          GENE_TO_GOs_MAP[[row[["LIGAND_2"]]]]
         ))
         RECEPTOR_GO <- unique(c(
-          ALL_LR_genes_go[[row[["RECEPTOR_1"]]]],
-          ALL_LR_genes_go[[row[["RECEPTOR_2"]]]],
-          ALL_LR_genes_go[[row[["RECEPTOR_3"]]]]
+          GENE_TO_GOs_MAP[[row[["RECEPTOR_1"]]]],
+          GENE_TO_GOs_MAP[[row[["RECEPTOR_2"]]]],
+          GENE_TO_GOs_MAP[[row[["RECEPTOR_3"]]]]
         ))
-        res_inter <- intersect(LIGAND_GO, RECEPTOR_GO)
+        res_inter <- lr_merge_func(LIGAND_GO, RECEPTOR_GO)
         if (length(res_inter) > 0) {
           res_inter <- data.table(
             LRI = rep(row[["LRI"]], length(res_inter)),
@@ -1695,42 +1859,20 @@ get_GO_interactions <- function(
     on = "GO_ID==ID",
     GO_NAME := i.GO_name
   ]
-  all_bp_desc <- ontologyIndex::get_descendants(onto_go_terms, "GO:0008150")
-  all_mf_desc <- ontologyIndex::get_descendants(onto_go_terms, "GO:0003674")
-  all_cc_desc <- ontologyIndex::get_descendants(onto_go_terms, "GO:0005575")
-  LR_interactions_go_intersection[, ASPECT := ifelse(
-    GO_ID %in% all_bp_desc,
-    "biological_process",
-    ifelse(
-      GO_ID %in% all_mf_desc,
-      "molecular_function",
-      ifelse(
-        GO_ID %in% all_cc_desc,
-        "cellular_component",
-        "other"
-      )
-    )
-  )]
-  #GO_LEVEL_table <- get_GO_LEVELS() #saved internally
-  LR_interactions_go_intersection[
-    GO_LEVEL_table,
-    on = "GO_ID==ID",
-    LEVEL := i.LEVEL
-  ]
   return(LR_interactions_go_intersection)
 }
 
 get_ECM_genes <- function(
   species
 ) {
-  go_id <- mgi_symbol <- NULL
+  GO_ID <- mgi_symbol <- NULL
   LRI_curated = scDiffCom::LRI_mouse$LRI_curated
   GO_interactions = get_GO_interactions(
     species,
     LRI_curated,
     only_genes_annotations = TRUE
   )
-  GO_interactions = GO_interactions[go_id != ""]
+  GO_interactions = GO_interactions[GO_ID != ""]
 
   get_ECM_GOs <- function() {
     return(
@@ -1744,7 +1886,7 @@ get_ECM_genes <- function(
     )
   }
   ECM_GOs = get_ECM_GOs()
-  ecm_genes = GO_interactions[go_id %in% ECM_GOs, mgi_symbol]
+  ecm_genes = GO_interactions[GO_ID %in% ECM_GOs, mgi_symbol]
   return(ecm_genes)
 }
 
@@ -1754,7 +1896,9 @@ merge_LR_orthologs <- function(
   nL,
   charL,
   nR,
-  charR
+  charR,
+  input_species,
+  output_species
 ) {
   to_keep <- LR_SORTED <- NULL
   out_names <- c(
@@ -1765,33 +1909,37 @@ merge_LR_orthologs <- function(
       paste0("RECEPTOR_", i, c("", "_CONF", "_TYPE"))
     })
   )
-  merge_id <- c("mouse_symbol", "confidence", "type")
+  merge_id <- c(paste0(output_species, "_symbol"), "confidence", "type")
   LR_temp <- copy(LR_dt)
-  LR_temp[, c(out_names) :=
-            c(
-              sapply(
-                1:nL,
-                function(i) {
-                  as.list(
-                    ortho_dt[.SD,
-                             on = c(paste0("human_symbol==", charL, i)),
-                             mget(paste0("x.", merge_id))
-                    ]
-                  )
-                }
-              ),
-              sapply(
-                1:nR,
-                function(i) {
-                  as.list(
-                    ortho_dt[.SD,
-                             on = c(paste0("human_symbol==", charR, i)),
-                             mget(paste0("x.", merge_id))
-                    ]
-                  )
-                }
-              )
-            )]
+  LR_temp[
+    ,
+    c(out_names) :=
+      c(
+        sapply(
+          1:nL,
+          function(i) {
+            as.list(
+              ortho_dt[
+                .SD,
+                on = c(paste0(input_species, "_symbol==", charL, i)),
+                mget(paste0("x.", merge_id))
+              ]
+            )
+          }
+        ),
+        sapply(
+          1:nR,
+          function(i) {
+            as.list(
+              ortho_dt[.SD,
+                       on = c(paste0(input_species, "_symbol==", charR, i)),
+                       mget(paste0("x.", merge_id))
+              ]
+            )
+          }
+        )
+      )
+  ]
   LR_temp <- stats::na.omit(LR_temp, cols = c("LIGAND_1", "RECEPTOR_1"))
   LR_temp[, to_keep := sapply(1:nrow(.SD), function(i) {
     all(c(
@@ -1807,6 +1955,13 @@ merge_LR_orthologs <- function(
   })]
   LR_temp <- LR_temp[to_keep == TRUE]
   LR_temp[, to_keep := NULL]
+  if (output_species == "mouse") {
+    #there are genes that are not MGI approved symbol, we change them
+    LR_temp[LR_temp == "Oit1"] <- "Fam3d"
+    LR_temp[LR_temp == "Il1f5"] <- "Il36rn"
+    LR_temp[LR_temp == "Il1f6"] <- "Il36a"
+    LR_temp[LR_temp == "Il1f8"] <- "Il36b"
+  }
   LR_temp[, LR_SORTED := list(sapply(1:nrow(.SD), function(i) {
     temp <- c(
       sapply(1:nL, function(j) {
@@ -1827,6 +1982,7 @@ merge_LR_orthologs <- function(
 get_orthologs <- function(
   genes,
   input_species,
+  output_species,
   one2one
 ) {
   if (!requireNamespace("biomaRt", quietly = TRUE)) {
@@ -1841,18 +1997,30 @@ get_orthologs <- function(
   ensembl_gene_id <- inl <- outl <- output <- input <- confidence <- NULL
   if (input_species == "mouse") {
     id_in <- "mmusculus"
-    id_out <- "hsapiens"
     id_gene <- "mgi_symbol"
     name_in <- "mouse"
-    name_out <- "human"
   } else if (input_species == "human") {
     id_in <- "hsapiens"
-    id_out <- "mmusculus"
     id_gene <- "hgnc_symbol"
     name_in <- "human"
-    name_out <- "mouse"
+  } else if (input_species == "rat") {
+    id_in <- "rnorvegicus"
+    id_gene <- "rgd_symbol"
+    name_in <- "rat"
   } else {
-    stop("Species not supported in function get_orthologs.")
+    stop("Input species not supported in function get_orthologs.")
+  }
+  if (output_species == "mouse") {
+    id_out <- "mmusculus"
+    name_out <- "mouse"
+  } else if (output_species == "human") {
+    id_out <- "hsapiens"
+    name_out <- "human"
+  } else if (output_species == "rat") {
+    id_out <- "rnorvegicus"
+    name_out <- "rat"
+  } else {
+    stop("Output species not supported in function get_orthologs.")
   }
   dataset <- paste0(id_in, "_gene_ensembl")
   gene_name <- paste0(id_out, "_homolog_associated_gene_name")
@@ -1957,11 +2125,20 @@ get_orthologs <- function(
 
 get_GO_LEVELS <- function(
 ) {
-  LEVEL <- N_ANCESTORS <- ID <- NULL
+  LEVEL <- N_ANCESTORS <- ID <- ASPECT <- NULL
   if (!requireNamespace("ontoProc", quietly = TRUE)) {
     stop(
       paste0(
         "Package \"ontoProc\" needed for this function to work.",
+        "Please install it."
+      ),
+      call. = FALSE
+    )
+  }
+  if (!requireNamespace("ontologyIndex", quietly = TRUE)) {
+    stop(
+      paste0(
+        "Package \"ontologyIndex\" needed for this function to work.",
         "Please install it."
       ),
       call. = FALSE
@@ -2036,5 +2213,21 @@ get_GO_LEVELS <- function(
     )]
     i <- i + 1
   }
+  all_bp_desc <- ontologyIndex::get_descendants(ontoGO, "GO:0008150")
+  all_mf_desc <- ontologyIndex::get_descendants(ontoGO, "GO:0003674")
+  all_cc_desc <- ontologyIndex::get_descendants(ontoGO, "GO:0005575")
+  GO_summary[, ASPECT := ifelse(
+    ID %in% all_bp_desc,
+    "biological_process",
+    ifelse(
+      ID %in% all_mf_desc,
+      "molecular_function",
+      ifelse(
+        ID %in% all_cc_desc,
+        "cellular_component",
+        "other"
+      )
+    )
+  )]
   return(GO_summary)
 }

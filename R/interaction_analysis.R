@@ -48,7 +48,7 @@
 #' @param seurat_object Seurat object that must contain normalized
 #'  data and relevant \code{meta.data} columns (see below). Gene names must be
 #'   MGI (mouse) or HGNC (human) approved symbols.
-#' @param LRI_species Either \code{"mouse"} or \code{"human"}. Indicates which
+#' @param LRI_species Either \code{"mouse"}, \code{"human"} or \code{"rat"}. Indicates which
 #'  LRI database to use and corresponds to the species of the \code{seurat_object}.
 #' @param seurat_celltype_id Name of the \code{meta.data} column in
 #'  \code{seurat_object} that contains cell-type annotations
@@ -98,21 +98,22 @@
 #'  and condition - required to express a gene for this gene to be considered
 #'  expressed in the corresponding cell type. Set to  \code{0.1} by default.
 #' @param threshold_quantile_score Threshold value used in conjunction with
-#'  \code{threshold_p_value_specificity} to establish if a CCI is considered as
+#'  \code{threshold_p_value_specificity} to establish if a CCI is considered
 #'  "detected". The default (\code{0.2}) indicates that CCIs with a score
 #'  in the 20\% lowest-scores are not considered detected. Can be modified
 #'  without the need to re-perform the permutation analysis (see Details).
 #' @param threshold_p_value_specificity Threshold value used in conjunction
-#'  with \code{threshold_quantile_score} to establish if a CCI is considered as
-#'  "detected". CCIs with a specificity p-value above the threshold (\code{0.05}
-#'  by default) are not considered detected. Can be modified
-#'  without the need to re-perform the permutation analysis (see Details).
+#'  with \code{threshold_quantile_score} to establish if a CCI is considered
+#'  "detected". CCIs with a (BH-adjusted) specificity p-value above the
+#'  threshold (\code{0.05} by default) are not considered detected. Can be
+#'  modified without the need to re-perform the permutation analysis
+#'  (see Details).
 #' @param threshold_p_value_de Threshold value used in conjunction
 #'  with \code{threshold_logfc} to establish how CCIs are differentially
 #'  expressed between \code{cond1_name} and \code{cond2_name}. CCIs with a
-#'  differential p-value above the threshold (\code{0.05} by default) are not
-#'  considered to change significantly. Can be modified without the need to
-#'  re-perform the permutation analysis (see Details).
+#'  (BH-adjusted) differential p-value above the threshold (\code{0.05} by
+#'  default) are not considered to change significantly. Can be modified
+#'  without the need to re-perform the permutation analysis (see Details).
 #' @param threshold_logfc Threshold value used in conjunction with
 #'  \code{threshold_p_value_de} to establish how CCIs are differentially
 #'  expressed between \code{cond1_name} and \code{cond2_name}. CCIs with an
@@ -208,6 +209,9 @@ run_interaction_analysis <- function(
   }
   if (LRI_species == "mouse") {
     LRI_table <- copy(scDiffCom::LRI_mouse$LRI_curated)
+  }
+  if (LRI_species == "rat") {
+    LRI_table <- copy(scDiffCom::LRI_rat$LRI_curated)
   }
   set.seed(seed)
   object <- run_internal_raw_analysis(

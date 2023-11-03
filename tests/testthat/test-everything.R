@@ -1,4 +1,6 @@
 
+data.table::setDTthreads(2)
+
 ## We test key functions of the package ####
 # roughly in the order how they are called in a standard analysis after
 # calling run_interaction_analysis
@@ -7,7 +9,7 @@
 
 parameters_mode <- list(
   wrong = list(
-    LRI_species = "rat",
+    LRI_species = "cat",
     seurat_celltype_id = c("cell_type", "cell_types"),
     seurat_condition_id = list(
       column_name = "age_group",
@@ -51,7 +53,7 @@ parameters_mode <- list(
     threshold_logfc = log(1.5),
     return_distributions = FALSE,
     seed = 42,
-    verbose = FALSE
+    verbose = TRUE
   ),
   cond_nostat = list(
     LRI_species = "mouse",
@@ -279,7 +281,7 @@ test_that(
       function(i) {
         expect_equal(
           nrow(i),
-          30475
+          29325
         )
       }
     )
@@ -592,6 +594,45 @@ test_that(
       function(object) {
         expect_s4_class(object, "scDiffCom")
       }
+    )
+  }
+)
+
+## Check main function is not running if not working on Seurat object ####
+
+test_that(
+  "run_interaction_analysis returns error if not passed a Seurat object", {
+    expect_error(
+      run_interaction_analysis(
+        seurat_object = "not a Seurat object",
+        LRI_species = "mouse",
+        seurat_celltype_id = "cell_type",
+        seurat_condition_id = list(
+          column_name = "age_group",
+          cond1_name = "YOUNG",
+          cond2_name = "OLD"
+        )
+      )
+    )
+  }
+)
+
+## Check main function is running ####
+
+test_that(
+  "run_interaction_analysis is running correctly", {
+    expect_s4_class(
+      run_interaction_analysis(
+        seurat_object = seurat_test,
+        LRI_species = "mouse",
+        seurat_celltype_id = "cell_type",
+        seurat_condition_id = list(
+          column_name = "age_group",
+          cond1_name = "YOUNG",
+          cond2_name = "OLD"
+        )
+      ),
+     "scDiffCom"
     )
   }
 )

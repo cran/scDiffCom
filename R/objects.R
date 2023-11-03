@@ -1,4 +1,6 @@
 #' @import data.table
+#' @import utils
+#' @import future
 #' @importFrom methods new setClass setClassUnion
 #'  setValidity setGeneric validObject
 #' @importFrom DelayedArray rowsum
@@ -23,7 +25,7 @@ setClass(
     cci_table_raw = "list_or_data.table",
     cci_table_detected = "list_or_data.table",
     ora_table = "list_or_data.table"#,
-   #ora_stringent = "list_or_data.table"
+    #ora_stringent = "list_or_data.table"
   ),
   prototype = list(
     parameters = list(),
@@ -50,7 +52,7 @@ setClass(
 #' @slot cci_table_detected Data.table with only the detected CCIs. If
 #'  \code{cci_table_raw} is not \code{NULL}, can be updated with new filtering
 #'  parameters without running the full permutation analysis (see
-#'  \code{\link{FilterCCI}})
+#'  \code{\link{FilterCCI}}).
 #' @slot ora_table List of data.tables with the results of the
 #'  over-representation analysis for each category. Results for additional
 #'  categories can be added with \code{\link{RunORA}}.
@@ -271,7 +273,7 @@ setMethod(
     object,
     categories = "all",
     simplified = TRUE
-    ) {
+  ) {
     get_tables_ora(
       object = object,
       categories = categories,
@@ -464,7 +466,7 @@ setMethod(
 #' @param skip_ora Default is \code{FALSE}. If \code{TRUE}, ORA is not
 #' performed with the new parameters and \code{ora_table} is set to an
 #' empty list. May be useful if one wants to quickly test (loop-over) several
-#' values of parameters and by-passing the ORA computing time.
+#' values of parameters and by-pass the ORA computing time.
 #' @param extra_annotations Convenience parameter to perform ORA on user-defined
 #' non-standard categories. If \code{NULL} (default), ORA is
 #' performed on standard categories. Otherwise it must be a list of data.tables
@@ -486,7 +488,7 @@ setGeneric(
     skip_ora = FALSE,
     extra_annotations = NULL,
     verbose = TRUE
-    ) standardGeneric("FilterCCI"),
+  ) standardGeneric("FilterCCI"),
   signature = "object"
 )
 
@@ -646,7 +648,7 @@ setGeneric(
       "biological_process",
       "molecular_function",
       "cellular_component"
-      ),
+    ),
     OR_threshold = 1,
     bh_p_value_threshold = 0.05
   ) standardGeneric("PlotORA"),
@@ -763,6 +765,208 @@ setMethod(
       abbreviation_table = abbreviation_table#,
       #LRIs = LRIs
     )
+  }
+)
+
+#' Reduce scDiffCom GO Terms
+#'
+#' Perform semantic similarity analysis and reduction of the
+#'  overrepresented GO terms of an scDiffCom object.
+#'
+#' This function is basically a wrapper around \code{rrvgo::calculateSimMatrix}
+#'  and \code{rrvgo::reduceSimMatrix}.
+#'
+#' @param object \code{scDiffCom} object
+#' @param method A distance method supported by rrvgo and GOSemSim:
+#'  c("Rel", "Resnik", "Lin", "Jiang", "Wang")
+#' @param threshold Similarity threshold used by \code{rrvgo::reduceSimMatrix}
+#'
+#' @return A data.table of GO terms with their reduction
+#'
+#' @export
+setGeneric(
+  name = "ReduceGO",
+  def = function(
+    object,
+    method = c("Rel", "Resnik", "Lin", "Jiang", "Wang"),
+    threshold = 0.7
+  ) standardGeneric("ReduceGO"),
+  signature = "object"
+)
+
+#' @rdname ReduceGO
+setMethod(
+  f = "ReduceGO",
+  signature = "scDiffCom",
+  definition = function(
+    object,
+    method = c("Rel", "Resnik", "Lin", "Jiang", "Wang"),
+    threshold = 0.7
+  ) {
+    if (!requireNamespace("GOSemSim", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"GOSemSim\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    if (!requireNamespace("rrvgo", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"rrvgo\" needed for this function to work.",
+          "Please install it or set 'reduced_GO_TERMS' to FALSE."
+        ),
+        call. = FALSE
+      )
+    }
+    method <- match.arg(method)
+    reduce_go_terms(
+      object = object,
+      method = method,
+      threshold = threshold
+    )
+  }
+)
+
+#' A shiny app to display scDiffCom results
+#'
+#' Launch a shiny app to explore scDiffCom results
+#'
+#' @param object \code{scDiffCom} object
+#' @param reduced_go_table If \code{NULL} (default), over-represented GO terms
+#'  are displayed as dot plots. If the output of
+#'   \code{scDiffCom::ReduceGO(object)}, GO terms are displayed on a on treemap
+#'   based on their semantic similarity and over-representation score
+#' @param ... Additional parameters to \code{shiny::runApp}
+#'
+#' @return Launch a shiny app
+#'
+#' @export
+setGeneric(
+  name = "BuildShiny",
+  def = function(
+    object,
+    reduced_go_table = NULL,
+    ...
+  ) standardGeneric("BuildShiny"),
+  signature = "object"
+)
+
+#' @rdname BuildShiny
+setMethod(
+  f = "BuildShiny",
+  signature = "scDiffCom",
+  definition = function(
+    object,
+    reduced_go_table = NULL,
+    ...
+  ) {
+    ui <- server <- NULL
+    if (object@parameters$iterations < 1000) {
+      stop(
+        "Shiny report not available for current scDiffCom object ",
+        "(at least 1000 iterations required, current has ",
+        object@parameters$iterations,
+        " )"
+      )
+    }
+    if (!object@parameters$permutation_analysis) {
+      stop(
+        "Shiny report not available for current scDiffCom object ",
+        "(permutation analysis has not been performed)"
+      )
+    }
+    if (!object@parameters$conditional_analysis) {
+      stop(
+        "Shiny report not available for current scDiffCom object ",
+        "(differential analysis has not been performed)"
+      )
+    }
+    if (!requireNamespace("shiny", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"shiny\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    if (!requireNamespace("shinyWidgets", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"shinyWidgets\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    if (!requireNamespace("shinythemes", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"shinythemes\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    if (!requireNamespace("DT", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"DT\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    if (!requireNamespace("plotly", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"plotly\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    if (!requireNamespace("visNetwork", quietly = TRUE)) {
+      stop(
+        paste0(
+          "Package \"visNetwork\" needed for this function to work.",
+          "Please install it."
+        ),
+        call. = FALSE
+      )
+    }
+    file_path <- system.file(
+      "appdir",
+      "app.R",
+      package = "scDiffCom"
+    )
+    if (!nzchar(file_path)) stop("Shiny app not found")
+    source(file_path, local = TRUE, chdir = TRUE)
+    server_env <- environment(server)
+    server_env$.object_ <- object
+    if (is.null(reduced_go_table)) {
+      server_env$.reduce_go_ <- FALSE
+    } else {
+      is_table_valid <- validate_reduced_go_table(
+        object = object,
+        reduced_go_table = reduced_go_table
+      )
+      if (is_table_valid) {
+        server_env$.reduce_go_ <- TRUE
+        server_env$.reduced_go_table_ <- reduced_go_table
+      } else {
+        stop(
+          "'reduced_go_table' is not valid. Please set to Null or ",
+          "run 'ReduceGO(object)' on your scDiffCom object"
+        )
+      }
+    }
+    options(DT.TOJSON_ARGS = list(na = "string"))
+    app <- shiny::shinyApp(ui, server)
+    shiny::runApp(app, ...)
   }
 )
 
